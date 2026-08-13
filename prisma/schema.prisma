@@ -1,0 +1,787 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+// Get a free hosted Postgres database in seconds: `npx create-db`
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model Depense {
+  id             String       @id @default(uuid())
+  montant        Float
+  motif          String
+  createdAt      DateTime     @default(now())
+  
+  // Relations
+  salesSession   SalesSession @relation(fields: [salesSessionId], references: [id], onDelete: Cascade)
+  salesSessionId String
+}
+
+
+// ─────────────────────────────────────────────
+// DEPARTMENT
+// ─────────────────────────────────────────────
+model Department {
+  id    Int    @id @default(autoincrement())
+  name  String @unique
+
+  roles Role[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("departments")
+}
+
+// ─────────────────────────────────────────────
+// PERMISSION
+// ─────────────────────────────────────────────
+model Permission {
+  id          Int    @id @default(autoincrement())
+  slug        String @unique
+  description String
+
+  roles RolePermission[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("permissions")
+}
+
+// ─────────────────────────────────────────────
+// ROLE — table pivot
+// ─────────────────────────────────────────────
+model Role {
+  id           Int    @id @default(autoincrement())
+  nomRole      String @unique // généré automatiquement : {post}_{department.name}
+  post         String
+  departmentId Int
+
+  department  Department       @relation(fields: [departmentId], references: [id])
+  permissions RolePermission[]
+  users       User[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("roles")
+}
+
+// ─────────────────────────────────────────────
+// TABLE PIVOT role_permission (Many-to-Many)
+// ─────────────────────────────────────────────
+model RolePermission {
+  roleId       Int
+  permissionId Int
+
+  role       Role       @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  permission Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@id([roleId, permissionId])
+  @@map("role_permissions")
+
+}
+
+
+
+model Entreprise {
+  id        String  @id @default(cuid())
+  nom       String
+  logo      String? // chemin local vers le fichier image
+  adresse   String?
+  telephone String?
+  email     String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("entreprises")
+}
+
+
+
+// ─────────────────────────────────────────────
+// USER
+// ─────────────────────────────────────────────
+model User {
+  id             String        @id @default(cuid())
+  email          String        @unique
+  firstName      String
+  lastName       String
+  phoneNumber    String
+  whatsappNumber String?
+  password       String
+  profilePicture String?
+  verified       Boolean       @default(false)
+  refreshToken   String?       @unique
+  accessToken    String?       @unique  
+
+  active         Boolean       @default(true)
+  status         AccountStatus @default(PENDING_VERIFICATION)
+
+  // Données RH
+  dateNaissance     DateTime?
+  dateRecrutement   DateTime    @default(now())
+  adresse           String?
+  salaireBase       Decimal     @default(0) @db.Decimal(12, 2)
+  typeHoraire       HoraireEnum @default(JOUR)
+  estArchive        Boolean     @default(false)
+  soldeConges       Int         @default(0)
+  quotaCongesAnnuel Int         @default(30)
+
+  // Auth
+  resetPasswordToken   String?
+  resetPasswordExpires DateTime?
+  emailToken           String?
+  emailTokenExpires    DateTime?
+
+  // Timestamps
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  roleId Int
+  role   Role @relation(fields: [roleId], references: [id])
+
+  //Relations métier 
+  contrats           Contrat[]
+  absences  Absence[]
+  retards   Retard[]
+  salaires  Salaire[]
+  rapports           Rapport[]
+
+  mouvements         MovementStock[]
+  sessionsCommercial SalesSession[] @relation("SessionCommercial")
+  sessionsManager    SalesSession[] @relation("SessionManager")
+
+  commerceLogs CommerceLog[]
+  rhLogs       RhLog[] 
+  authLogs     AuthLog[]  
+
+  @@map("users")
+}
+
+
+
+// ─── Module Commercial Session ────────────────────────────────────────────────
+
+enum SessionStatus {
+  OPEN    // Session en cours — commercial sur le terrain
+  CLOSED  // Session clôturée — retour effectué et comptes faits
+  CANCELLED  // Session annulée 
+}
+
+
+model SalesSession {
+  id          String        @id @default(cuid())
+
+  // ── Qui ──────────────────────────────────────────────────────────────────
+  commercialId  String
+  commercial    User          @relation("SessionCommercial", fields: [commercialId], references: [id])
+  managerId     String
+  manager       User          @relation("SessionManager",    fields: [managerId],    references: [id])
+
+  // ── Quel stock ────────────────────────────────────────────────────────────
+  articleStockId String
+  articleStock   ArticleStock  @relation(fields: [articleStockId], references: [id])
+
+  // ── Quantités ─────────────────────────────────────────────────────────────
+  quantiteDepart  Int           // stock confié au départ
+  quantiteRetour  Int?          // invendus ramenés (null tant que OPEN)
+  // quantiteVendue = quantiteDepart - quantiteRetour (calculé)
+
+  // ── Timing ────────────────────────────────────────────────────────────────
+  jourOuverture DateTime
+  heureDepart   DateTime      @default(now())
+  heureRetour   DateTime?
+
+  // ── Finances ──────────────────────────────────────────────────────────────
+  totalVentesRecues      Int?  // argent liquide remis par le commercial
+  depensesImprevues      Int   @default(0)
+  motifDepense           String?
+  // chiffreAffaireTheorique = quantiteVendue × prixUnite  (calculé)
+  // ecartCaisse = totalVentesRecues - chiffreAffaireTheorique (calculé)
+
+  // ── Statut ────────────────────────────────────────────────────────────────
+  status        SessionStatus  @default(OPEN)
+
+  // ── Mouvements liés ───────────────────────────────────────────────────────
+  mouvementDepart  MovementStock? @relation("SessionDepart",  fields: [mouvementDepartId],  references: [id])
+  mouvementDepartId String?       @unique
+  mouvementRetour  MovementStock? @relation("SessionRetour",  fields: [mouvementRetourId],  references: [id])
+  mouvementRetourId String?       @unique
+
+  // ── depensesImprevues  ───────────────────────────────────────────────────────
+  depenses          Depense[]      // Relation
+  totalDepenses     Float          @default(0) // Somme pour accès rapide
+
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([commercialId])
+  @@index([managerId])
+  @@index([articleStockId])
+  @@index([status])
+}
+
+
+
+
+// ─── Module Stock ─────────────────────────────────────────────────────────────
+model Category {
+  id          String    @id @default(cuid())
+  nomUnique   String
+  prixUnite   Int
+  description String?
+  deletedAt   DateTime? 
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+ 
+  articleId   String
+  article     Article   @relation(fields: [articleId], references: [id], onDelete: Cascade)
+  
+  // NOUVEAU : Une catégorie possède maintenant ses propres lignes de stock
+  stocks      ArticleStock[] 
+
+  @@index([articleId])
+}
+
+model Article {  
+  id          String    @id @default(cuid())
+  nom         String    @unique
+  deletedAt   DateTime? 
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  categories  Category[]
+  // MODIFIÉ : Un article a plusieurs lignes de stock (une par catégorie)
+  stocks      ArticleStock[] 
+  mouvements  MovementStock[]
+}
+
+model ArticleStock {
+  id               String        @id @default(cuid())
+  quantiteActuelle Int           @default(0)
+  niveauAlerte     TypeSeuil     @default(NORMAL)
+  deletedAt        DateTime?    
+  
+  // MODIFIÉ : Relation avec l'Article (plus de @unique ici)
+  articleId        String
+  article          Article       @relation(fields: [articleId], references: [id], onDelete: Cascade)
+  
+  // NOUVEAU : Relation avec la Catégorie
+  categoryId       String
+  category         Category      @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+
+  mouvements      MovementStock[]
+
+  sessions  SalesSession[]
+
+  seuilAlerte      Int           @default(20)
+  seuilCritique    Int           @default(10)
+
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+
+  // IMPORTANT : Unicité pour éviter d'avoir deux stocks pour le même article dans la même catégorie
+  @@unique([articleId, categoryId]) 
+  @@index([articleId])
+  @@index([categoryId])
+  @@index([niveauAlerte])
+}
+
+model MovementStock {
+  id                     String        @id @default(cuid())
+  type                   TypeMouvement
+  quantiteSortieOuEntree Int
+  motif                  String?
+  quantiteAvant          Int
+  quantiteApres          Int
+  movementDate           DateTime
+  isSystem               Boolean       @default(false)
+  
+  articleStockId         String
+  articleStock           ArticleStock  @relation(fields: [articleStockId], references: [id], onDelete: Cascade)
+  
+  articleId              String
+  article                Article       @relation(fields: [articleId], references: [id], onDelete: Cascade)
+  
+  userId                 String
+  user                   User          @relation(fields: [userId], references: [id])
+
+  // --- Liens avec SalesSession ---
+  sessionDepart  SalesSession? @relation("SessionDepart")  // NOUVEAU
+  sessionRetour  SalesSession? @relation("SessionRetour") 
+
+
+  
+  createdAt              DateTime      @default(now())
+
+  @@index([articleStockId])
+  @@index([articleId])
+  @@index([userId])
+  @@index([movementDate])
+}
+
+
+// ─────────────────────────────────────────────
+// ---  GESTION ABSCENCES USERS ---
+// ─────────────────────────────────────────────
+
+// Module concerné par une action dans JournalAudit
+enum AuditModule {
+  USER
+  CONTRAT
+  ABSENCE
+  RETARD
+  SALAIRE
+  GRILLE_SANCTIONS
+  FICHE_PAIE
+  RAPPORT
+  ROLE
+  PERMISSION
+  DEPARTMENT
+}
+
+
+
+model Contrat {
+  id        String      @id @default(cuid())
+  userId    String
+  user      User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  type      ContratType
+  dateDebut DateTime
+  dateFin   DateTime?
+  alertes   AlerteCDD[]
+
+  deletedAt DateTime? // Si null = actif. Si renseigné = archivé/supprimé.
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId])
+  @@index([type, dateFin])
+  @@map("contrats")
+}
+
+model AlerteCDD {
+  id         String  @id @default(cuid())
+  contratId  String
+  contrat    Contrat @relation(fields: [contratId], references: [id], onDelete: Cascade)
+  delaiJours Int
+  estEnvoyee Boolean  @default(false)
+  envoyeeAt  DateTime @default(now())
+
+  createdAt DateTime @default(now())
+
+  @@unique([contratId, delaiJours])
+  @@map("alertes_cdd")
+}
+
+
+// ── ABSENCE ───────────────────────────────────────────────────────────────────
+// Un seul enregistrement par employé par mois.
+// jours : [{ date: "2026-01-15", estJustifie: true }, ...]
+// Règle : absence justifiée → 0 déduction | absence injustifiée → 1 jour déduit
+model Absence {
+  id     String @id @default(cuid())
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  mois  Int
+  annee Int
+
+  jours Json @default("[]") // JourAbsence[]
+
+  // Rattaché au salaire lors de la clôture du mois
+  salaireId String?  @unique
+  salaire   Salaire? @relation(fields: [salaireId], references: [id])
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([userId, mois, annee])
+  @@index([userId])
+  @@index([mois, annee])
+  @@map("absences")
+}
+
+// ── RETARD ────────────────────────────────────────────────────────────────────
+// Un seul enregistrement par employé par mois.
+// jours : [{ date: "2026-01-15", estJustifie: false }, ...]
+// Règle : retard justifié → 0 déduction | retard injustifié → journée annulée (1 jour déduit)
+// Contrainte : un même jour NE PEUT PAS figurer à la fois dans Absence et Retard.
+model Retard {
+  id     String @id @default(cuid())
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  mois  Int
+  annee Int
+
+  jours Json @default("[]") // JourRetard[]
+
+  salaireId String?  @unique
+  salaire   Salaire? @relation(fields: [salaireId], references: [id])
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([userId, mois, annee])
+  @@index([userId])
+  @@index([mois, annee])
+  @@map("retards")
+}
+
+// ── SALAIRE ───────────────────────────────────────────────────────────────────
+// Initialisé manuellement par l'admin en début de mois.
+// Clôturé en fin de mois → déclenche le calcul définitif.
+// primes : [{ somme: 5000, raison: "Performance Q1" }, ...]
+model Salaire {
+  id     String @id @default(cuid())
+  userId String
+  user   User   @relation(fields: [userId], references: [id])
+
+  mois  Int
+  annee Int   
+
+  // ── Base de calcul ──
+  nbJoursOuvrables Int             // jours lun–ven du mois
+  prixJournalier   Decimal         @db.Decimal(12, 2) // salaireBrut / nbJoursOuvrables
+  salaireBrut      Decimal         @db.Decimal(12, 2) // = user.salaireBase au moment de l'init
+
+  // ── Absences (calculé à la clôture) ──
+  nbAbsJust    Int     @default(0)
+  nbAbsInjust  Int     @default(0)
+  deductionAbs Decimal @default(0) @db.Decimal(12, 2) // nbAbsInjust × prixJournalier
+
+  // ── Retards (calculé à la clôture) ──
+  nbRetardsJust    Int     @default(0)
+  nbRetardsInjust  Int     @default(0)
+  deductionRetards Decimal @default(0) @db.Decimal(12, 2) // nbRetardsInjust × prixJournalier
+
+  totalDeductions Decimal @default(0) @db.Decimal(12, 2)
+
+  // ── Primes (modifiable avant clôture) ──
+  primes      Json    @default("[]") // Prime[]
+  totalPrimes Decimal @default(0)   @db.Decimal(12, 2)
+
+  // ── Résultat ──
+  salaireNet   Decimal  @db.Decimal(12, 2) // salaireBrut - totalDeductions + totalPrimes
+  montantVerse Decimal? @db.Decimal(12, 2) // enregistré lors du versement réel
+  ecart        Decimal? @db.Decimal(12, 2) // montantVerse - salaireNet
+
+  estCloture  Boolean   @default(false)
+  dateCloture DateTime?
+
+  // Relations
+  absence     Absence?
+  retard      Retard?
+  ficheDePaie FicheDePaie?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([userId, mois, annee])
+  @@index([userId])
+  @@index([mois, annee])
+  @@map("salaires")
+}
+
+
+
+
+
+
+model FicheDePaie {
+  id        String  @id @default(cuid())
+  salaireId String  @unique
+  salaire   Salaire @relation(fields: [salaireId], references: [id])
+
+  fichierPDF     String?
+  dateGeneration DateTime  @default(now())
+  signeeParUser  Boolean   @default(false)
+  dateSignature  DateTime?
+  jourDePaie     DateTime 
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("fiches_de_paie")
+}
+
+
+model Rapport {
+  id     String  @id @default(cuid())
+  userId String?
+  user   User?   @relation(fields: [userId], references: [id])
+
+  type         RapportType
+  periode      String
+  mois         Int?
+  annee        Int?
+  formatExport ExportFormat
+  fichier      String?
+
+  dateGeneration DateTime @default(now())
+  createdAt      DateTime @default(now())
+
+  // ─── AJOUT DU SOFT DELETE ───
+  estArchive     Boolean  @default(false)
+  deletedAt      DateTime?
+
+  @@index([type])
+  @@index([userId])
+  @@map("rapports")
+}
+
+
+// ─── Commerce Log ─────────────────────────────────────────────────────────────
+
+
+model CommerceLog {
+  id String @id @default(cuid())
+
+  // Who performed the action
+  actorId   String
+  actor     User   @relation(fields: [actorId], references: [id])
+  actorName String
+
+  // Which action on which module
+  module CommerceModule
+  action String
+  level  LogLevel       @default(INFO)
+
+  // Target entity
+  entityId   String?
+  entityName String?
+
+  // Before / after diff
+  valeurAvant String?
+  valeurApres String?
+
+  // Result
+  state   State  @default(SUCCESS)
+  message String
+
+  createdAt DateTime @default(now())
+
+  @@index([actorId])
+  @@index([module])
+  @@index([action])
+  @@index([entityId])
+  @@index([createdAt])
+  @@index([level])
+
+  @@map("commerce_logs")
+}
+
+
+
+// ─── RH Log model ─────────────────────────────────────────────────────────────
+
+model RhLog {
+  id String @id @default(cuid())
+
+  // Who performed the action
+  actorId   String
+  actor     User   @relation(fields: [actorId], references: [id])
+  actorName String
+
+  // Which action on which module
+  module RhModule
+  action String
+  level  LogLevel @default(INFO)
+
+  // Target entity
+  entityId   String?
+  entityName String?
+
+  // Before / after diff
+  valeurAvant String?
+  valeurApres String?
+
+  // Result
+  state   State  @default(SUCCESS)
+  message String
+
+  createdAt DateTime @default(now())
+
+  @@index([actorId])
+  @@index([module])
+  @@index([action])
+  @@index([entityId])
+  @@index([createdAt])
+  @@index([level])
+
+  @@map("rh_logs")
+}
+
+// ─── Auth Log ─────────────────────────────────────────────────────────────────
+
+enum AuthModule {
+  AUTH
+  USER
+  ROLE
+  PERMISSION
+}
+
+model AuthLog {
+  id String @id @default(cuid())
+
+  // Who performed the action
+  actorId   String?       // nullable — some auth events have no identified user yet
+  actor     User?         @relation(fields: [actorId], references: [id])
+  actorName String?       // snapshot at time of action
+
+  // Which action on which module
+  module AuthModule
+  action String
+  level  LogLevel  @default(INFO)
+
+  // Target entity
+  entityId   String?
+  entityName String?
+
+  // Before / after diff
+  valeurAvant String?
+  valeurApres String?
+
+  // Result + failure reason
+  state   State   @default(SUCCESS)
+  reason  Reason?
+  message String
+
+  // Extra auth context
+  email String? // snapshot of the email involved (useful for failed logins)
+
+  createdAt DateTime @default(now())
+
+  @@index([actorId])
+  @@index([module])
+  @@index([action])
+  @@index([email])
+  @@index([createdAt])
+  @@index([level])
+  @@index([state])
+
+  @@map("auth_logs")
+}
+
+
+
+// ─────────────────────────────────────────────
+// --- EQNUMS OBLIGATOIRE ---
+// ─────────────────────────────────────────────
+
+enum CommerceModule {
+  STOCK
+  SALES_SESSION
+  ENTREPRISE
+}
+
+
+enum RhModule {
+  ABSENCE
+  RETARD
+  SALAIRE
+  FICHE_PAIE
+  CONTRAT
+  DEPARTMENT
+  RAPPORT
+}
+
+
+enum TypeSeuil {
+  NORMAL    // quantite >= 20
+  ALERTE    // 10 <= quantite < 20
+  CRITIQUE  // quantite < 10
+}
+
+enum TypeMouvement {
+  ENTREE
+  SORTIE
+  AJUSTEMENT
+  PERTE
+  INITIALISATION
+}
+
+enum LogLevel {
+  INFO      
+  WARNING   
+  ERROR     
+  CRITICAL  
+}
+
+enum State {
+  SUCCESS
+  FAILED
+}
+
+enum Reason {
+  UNAUTHORIZED
+  FORBIDDEN
+  BAD_REQUEST
+  CONFLICT
+  UNKNOWN
+  NOT_FOUND
+  VALIDATION_ERROR
+  SERVER_ERROR
+  INTERNAL_SERVER_ERROR
+}
+
+enum AccountStatus {
+  PENDING_VERIFICATION
+  ACTIVE
+  DEACTIVATED
+  ARCHIVED
+} 
+
+enum HoraireEnum {
+  JOUR
+  NUIT
+  MIXTE
+}
+
+
+enum ContratType {
+  CDD
+  CDI
+}
+
+
+enum AbsenceType {
+  RETARD
+  ABSENCE
+}
+
+enum Raison {
+  MALADIE
+  CONGE_PAYE
+  CONGE_SANS_SOLDE
+  INJUSTIFIE
+  AUTRE
+}
+
+enum RapportType {
+  ABSENCES
+  RETARDS
+  MASSE_SALARIALE
+  CONTRATS_CDD
+}
+
+enum ExportFormat {
+  PDF
+  EXCEL
+  CSV
+}

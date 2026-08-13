@@ -1,0 +1,41 @@
+import { JwtService } from '@nestjs/jwt';
+import { ConfigService } from '@nestjs/config';
+import { PrismaService } from '../../../../prisma/prisma.service';
+import { MailService } from '../mail/mail.service';
+import { ResendVerificationEmailDto } from '../dto/request/resend-Verification-Email.dto';
+import { UserService } from '../../user/services/services.service';
+import { CreateUserDto } from '../../user/dto/request/user.dto';
+import { AuthLogService } from '../../log/auth-log.service';
+import { RegisterResponse, ResendVerificationEmailResponse, VerifyEmailResponse, LoginResponse, RefreshTokenResponse, ForgotPasswordResponse, ResetPasswordResponse, LogoutResponse, GetMeResponse, ForgotPasswordDto, LoginDto, RefreshTokenDto, ResetPasswordDto, VerifyEmailDto } from '../dto/index';
+import { UpdateProfileDto } from '../dto/request/update-profile.dto';
+import { ChangePasswordProfileDto } from '../dto/request/change-password.dto';
+import { StockRealtimeGateway } from 'src/modules/commerce/realtime/stock-realtime.gateway';
+export declare class AuthentificationService {
+    private prisma;
+    private jwtService;
+    private configService;
+    private mailService;
+    private userService;
+    private authLog;
+    private readonly realtimeGateway;
+    constructor(prisma: PrismaService, jwtService: JwtService, configService: ConfigService, mailService: MailService, userService: UserService, authLog: AuthLogService, realtimeGateway: StockRealtimeGateway);
+    private readonly logger;
+    register(dto: CreateUserDto, actorId: string): Promise<RegisterResponse>;
+    verifyEmail(dto: VerifyEmailDto): Promise<VerifyEmailResponse>;
+    setCurrentTokens(userId: string, accessToken: string, refreshToken: string): Promise<void>;
+    resendVerificationEmail(emailDto: ResendVerificationEmailDto, req: any): Promise<ResendVerificationEmailResponse>;
+    login(dto: LoginDto): Promise<LoginResponse>;
+    refreshToken(dto: RefreshTokenDto, accessToken: string): Promise<RefreshTokenResponse>;
+    updateHashedRefreshToken(userId: string, refreshToken: string): Promise<void>;
+    forgotPassword(dto: ForgotPasswordDto): Promise<ForgotPasswordResponse>;
+    resetPassword(dto: ResetPasswordDto): Promise<ResetPasswordResponse>;
+    logout(userId: string): Promise<LogoutResponse>;
+    getMe(userId: string): Promise<GetMeResponse>;
+    updateProfile(userId: string, dto: UpdateProfileDto): Promise<GetMeResponse>;
+    changePassword(userId: string, dto: ChangePasswordProfileDto): Promise<{
+        message: string;
+    }>;
+    updateMyProfilePicture(userId: string, relativePath: string): Promise<any>;
+    private generateTokens;
+    private sanitize;
+}

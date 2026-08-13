@@ -1,0 +1,1 @@
+{"version":3,"file":"login-response.js","sourceRoot":"","sources":["../../../../../../../src/modules/auth/authentification/dto/response/login-response.ts"],"names":[],"mappings":";;AAMA,MAAM,gBAAgB,GAAG;IACrB,IAAI,EAAE;QACF,OAAO,EAAE;YACL,WAAW,EAAE;gBACT,OAAO,EAAE,EAAE,UAAU,EAAE,IAAI,EAAE;aAChC;SACJ;KACJ;CACyB,CAAC"}
